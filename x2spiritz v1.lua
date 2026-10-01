@@ -659,6 +659,147 @@ do
 		end
 	end)
 end
+--========================
+-- PROTECT TIMER ESP (FIXED)
+-- รองรับ Attribute ที่อยู่ทั้ง Player และ Character
+--========================
+local protectTags = {}
+
+local function removeProtectTag(plr)
+    local tag = protectTags[plr]
+    if tag then
+        pcall(function() tag:Destroy() end)
+        protectTags[plr] = nil
+    end
+end
+
+local function createProtectTag(plr)
+    if plr == LP or protectTags[plr] then return end
+
+    local tag = Instance.new("BillboardGui")
+    tag.Name = plr.Name .. "_ProtectTimer"
+    tag.Size = UDim2.fromOffset(220, 34)
+    tag.StudsOffset = Vector3.new(0, 5.2, 0)
+    tag.AlwaysOnTop = true
+    tag.LightInfluence = 0
+    tag.Enabled = false
+    tag.ResetOnSpawn = false
+    tag.Parent = espFolder
+
+    local text = Instance.new("TextLabel")
+    text.Name = "Text"
+    text.Size = UDim2.fromScale(1, 1)
+    text.BackgroundTransparency = 1
+    text.Font = Enum.Font.GothamBold
+    text.TextSize = 15
+    text.TextColor3 = Color3.fromRGB(255, 220, 50)
+    text.TextStrokeColor3 = Color3.new(0, 0, 0)
+    text.TextStrokeTransparency = 0
+    text.Text = ""
+    text.Parent = tag
+
+    protectTags[plr] = tag
+end
+
+local function getProtectUntil(plr, char)
+    -- ชื่อหลักที่พบจากระบบเกม
+    local v = plr:GetAttribute("WarzProtectUntil")
+    if typeof(v) == "number" then return v, "Player.WarzProtectUntil" end
+
+    if char then
+        v = char:GetAttribute("WarzProtectUntil")
+        if typeof(v) == "number" then return v, "Character.WarzProtectUntil" end
+    end
+
+    -- fallback: หา attribute ที่ชื่อมี protect และเป็นตัวเลข
+    local function scan(inst, prefix)
+        if not inst then return nil end
+        for name, value in pairs(inst:GetAttributes()) do
+            local low = string.lower(tostring(name))
+            if typeof(value) == "number" and string.find(low, "protect", 1, true) then
+                return value, prefix .. "." .. tostring(name)
+            end
+        end
+    end
+
+    local value, source = scan(plr, "Player")
+    if value ~= nil then return value, source end
+    return scan(char, "Character")
+end
+
+local function protectRemaining(value)
+    if typeof(value) ~= "number" then return nil end
+
+    -- เกมอาจเก็บเป็น timestamp ของ GetServerTimeNow หรือ Unix timestamp
+    local serverNow = Workspace:GetServerTimeNow()
+    local r = value - serverNow
+    if r > -86400 and r < 86400 * 30 then
+        return r
+    end
+
+    local unixNow = DateTime.now().UnixTimestampMillis / 1000
+    return value - unixNow
+end
+
+local protectDebugPrinted = {}
+local function updateProtectTag(plr)
+    if plr == LP then return end
+    createProtectTag(plr)
+
+    local tag = protectTags[plr]
+    if not tag then return end
+
+    local char = plr.Character
+    local adornee = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
+    if not adornee then
+        tag.Enabled = false
+        return
+    end
+    tag.Adornee = adornee
+
+    local protectUntil, source = getProtectUntil(plr, char)
+    if typeof(protectUntil) ~= "number" then
+        tag.Enabled = false
+        return
+    end
+
+    if not protectDebugPrinted[plr] then
+        protectDebugPrinted[plr] = true
+        print(string.format("[Protect Timer] %s | %s = %s", plr.Name, tostring(source), tostring(protectUntil)))
+    end
+
+    local remaining = protectRemaining(protectUntil)
+    if remaining and remaining > 0 then
+        tag.Enabled = true
+        tag.Text.Text = string.format("PROTECT %.1fs", remaining)
+    else
+        tag.Enabled = false
+    end
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    createProtectTag(plr)
+end
+
+connect(Players.PlayerAdded, createProtectTag)
+connect(Players.PlayerRemoving, function(plr)
+    protectDebugPrinted[plr] = nil
+    removeProtectTag(plr)
+end)
+
+-- ใช้ Heartbeat 10 ครั้ง/วินาที เพียงพอสำหรับ timer และเบากว่า RenderStepped
+local protectAcc = 0
+connect(RunService.Heartbeat, function(dt)
+    protectAcc += dt
+    if protectAcc < 0.1 then return end
+    protectAcc = 0
+    for _, plr in ipairs(Players:GetPlayers()) do
+        pcall(updateProtectTag, plr)
+    end
+end)
+
+print("[Protect Timer FIX] LOADED")
+
 local ITEM_NAMES = {}
 local function prettyItem(id)
 	if type(id) ~= "string" or id == "" then return "-" end
